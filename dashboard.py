@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from scapy.all import sniff, IP, TCP, UDP
+from scapy.all import sniff, IP, TCP, UDP, ICMP
 import threading
 import logging
 import time
@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname=s) - %(message=s)')
 logger = logging.getLogger(__name__)
 
 class PacketProcessor:
@@ -101,6 +101,33 @@ def create_visualizations(df: pd.DataFrame):
         )
         st.plotly_chart(fig_sources, use_container_width=True)
 
+def check_alert_conditions(df: pd.DataFrame, packet_threshold: int, alert_protocol: str):
+    """Check if alert conditions are met"""
+    if 'protocol' not in df.columns:
+        return []
+
+    total_packets = len(df)
+    specific_protocol_packets = df[df['protocol'] == alert_protocol]
+    protocol_count = len(specific_protocol_packets)
+
+    alerts = []
+
+    if total_packets > packet_threshold:
+        alerts.append(f"Total packets exceed threshold: {total_packets} > {packet_threshold}")
+
+    if protocol_count > 0:
+        alerts.append(f"Detected {protocol_count} packets of protocol: {alert_protocol}")
+
+    return alerts
+
+def display_alerts(alerts: List[str]):
+    """Display alerts in the Streamlit app"""
+    if alerts:
+        for alert in alerts:
+            st.error(alert)
+    else:
+        st.success("No alerts")
+
 def start_packet_capture():
     """Start packet capture in a separate thread"""
     processor = PacketProcessor()
@@ -119,6 +146,11 @@ def main():
     st.set_page_config(page_title="Network Traffic Analysis", layout="wide")
     st.title("Real-time Network Traffic Analysis")
 
+    # Allow users to set alert conditions
+    st.sidebar.header("Alert Settings")
+    packet_threshold = st.sidebar.number_input("Packet Threshold", min_value=0, value=100)
+    alert_protocol = st.sidebar.selectbox("Protocol to Alert", ["TCP", "UDP", "ICMP"])
+
     # Initialize packet processor in session state
     if 'processor' not in st.session_state:
         st.session_state.processor = start_packet_capture()
@@ -136,6 +168,10 @@ def main():
     with col2:
         duration = time.time() - st.session_state.start_time
         st.metric("Capture Duration", f"{duration:.2f}s")
+
+    # Check and display alerts
+    alerts = check_alert_conditions(df, packet_threshold, alert_protocol)
+    display_alerts(alerts)
 
     # Display visualizations
     create_visualizations(df)
