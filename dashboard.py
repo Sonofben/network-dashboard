@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname=s) - %(message=s)')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class PacketProcessor:
@@ -21,6 +21,7 @@ class PacketProcessor:
         self.start_time = datetime.now()
         self.packet_count = 0
         self.lock = threading.Lock()
+        self.total_data_size = 0  # To track the total data size
 
     def get_protocol_name(self, protocol_num: int) -> str:
         """Convert protocol number to name"""
@@ -31,12 +32,13 @@ class PacketProcessor:
         try:
             if IP in packet:
                 with self.lock:
+                    packet_size = len(packet)
                     packet_info = {
                         'timestamp': datetime.now(),
                         'source': packet[IP].src,
                         'destination': packet[IP].dst,
                         'protocol': self.get_protocol_name(packet[IP].proto),
-                        'size': len(packet),
+                        'size': packet_size,
                         'time_relative': (datetime.now() - self.start_time).total_seconds()
                     }
 
@@ -57,6 +59,7 @@ class PacketProcessor:
 
                     self.packet_data.append(packet_info)
                     self.packet_count += 1
+                    self.total_data_size += packet_size
 
                     # Keep only last 10000 packets to prevent memory issues
                     if len(self.packet_data) > 10000:
@@ -69,6 +72,14 @@ class PacketProcessor:
         """Convert packet data to pandas DataFrame"""
         with self.lock:
             return pd.DataFrame(self.packet_data)
+
+    def calculate_bandwidth_mbps(self) -> float:
+        """Calculate the current bandwidth usage in Mbps"""
+        duration = (datetime.now() - self.start_time).total_seconds()
+        if duration == 0:
+            return 0
+        bandwidth_bps = self.total_data_size * 8 / duration  # Convert bytes to bits
+        return bandwidth_bps / 1_000_000  # Convert bits to megabits
 
 def create_visualizations(df: pd.DataFrame):
     """Create all dashboard visualizations"""
@@ -101,22 +112,26 @@ def create_visualizations(df: pd.DataFrame):
         )
         st.plotly_chart(fig_sources, use_container_width=True)
 
-def check_alert_conditions(df: pd.DataFrame, packet_threshold: int, alert_protocol: str):
+def check_alert_conditions(df: pd.DataFrame, packet_threshold: int, alert_protocol: str, bandwidth_threshold: float):
     """Check if alert conditions are met"""
+    alerts = []
+
     if 'protocol' not in df.columns:
-        return []
+        return alerts
 
     total_packets = len(df)
     specific_protocol_packets = df[df['protocol'] == alert_protocol]
     protocol_count = len(specific_protocol_packets)
-
-    alerts = []
 
     if total_packets > packet_threshold:
         alerts.append(f"Total packets exceed threshold: {total_packets} > {packet_threshold}")
 
     if protocol_count > 0:
         alerts.append(f"Detected {protocol_count} packets of protocol: {alert_protocol}")
+
+    bandwidth_mbps = st.session_state.processor.calculate_bandwidth_mbps()
+    if bandwidth_mbps > bandwidth_threshold:
+        alerts.append(f"Bandwidth exceeds threshold: {bandwidth_mbps:.2f} Mbps > {bandwidth_threshold:.2f} Mbps")
 
     return alerts
 
@@ -150,6 +165,7 @@ def main():
     st.sidebar.header("Alert Settings")
     packet_threshold = st.sidebar.number_input("Packet Threshold", min_value=0, value=100)
     alert_protocol = st.sidebar.selectbox("Protocol to Alert", ["TCP", "UDP", "ICMP"])
+    bandwidth_threshold = st.sidebar.number_input("Bandwidth Threshold (Mbps)", min_value=0.0, value=10.0)
 
     # Initialize packet processor in session state
     if 'processor' not in st.session_state:
@@ -157,7 +173,7 @@ def main():
         st.session_state.start_time = time.time()
 
     # Create dashboard layout
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)  # Added a third column for bandwidth
 
     # Get current data
     df = st.session_state.processor.get_dataframe()
@@ -168,9 +184,12 @@ def main():
     with col2:
         duration = time.time() - st.session_state.start_time
         st.metric("Capture Duration", f"{duration:.2f}s")
+    with col3:
+        bandwidth_mbps = st.session_state.processor.calculate_bandwidth_mbps()
+        st.metric("Bandwidth (Mbps)", f"{bandwidth_mbps:.2f}")
 
     # Check and display alerts
-    alerts = check_alert_conditions(df, packet_threshold, alert_protocol)
+    alerts = check_alert_conditions(df, packet_threshold, alert_protocol, bandwidth_threshold)
     display_alerts(alerts)
 
     # Display visualizations
