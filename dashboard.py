@@ -7,6 +7,9 @@ import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -115,45 +118,68 @@ def start_packet_capture():
 
 def main():
     """Main function to run the dashboard"""
-    st.set_page_config(page_title="Network Traffic Analysis", layout="wide")
-    st.title("Real-time Network Traffic Analysis")
 
-    # Initialize packet processor in session state
-    if 'processor' not in st.session_state:
-        st.session_state.processor = start_packet_capture()
-        st.session_state.start_time = time.time()
+    # Load authentication configuration
+    with open('config.yaml') as file:
+        config = yaml.load(file, Loader=SafeLoader)
 
-    # Create dashboard layout
-    col1, col2 = st.columns(2)
+    authenticator = stauth.Authenticate(
+        config['credentials'],
+        config['cookie']['name'],
+        config['cookie']['key'],
+        config['cookie']['expiry_days'],
+        config['preauthorized']
+    )
 
-    # Get current data
-    df = st.session_state.processor.get_dataframe()
+    # Add user authentication
+    name, authentication_status, username = authenticator.login('Login', 'main')
 
-    # Display metrics
-    with col1:
-        st.metric("Total Packets", len(df))
-    with col2:
-        duration = time.time() - st.session_state.start_time
-        st.metric("Capture Duration", f"{duration:.2f}s")
+    if authentication_status:
+        st.set_page_config(page_title="Network Traffic Analysis", layout="wide")
+        st.title(f"Real-time Network Traffic Analysis (Logged in as {name})")
 
-    # Display visualizations
-    create_visualizations(df)
+        # Initialize packet processor in session state
+        if 'processor' not in st.session_state:
+            st.session_state.processor = start_packet_capture()
+            st.session_state.start_time = time.time()
 
-    # Display recent packets
-    st.subheader("Recent Packets")
-    if len(df) > 0:
-        st.dataframe(
-            df.tail(10)[['timestamp', 'source', 'destination', 'protocol', 'size']],
-            use_container_width=True
-        )
+        # Create dashboard layout
+        col1, col2 = st.columns(2)
 
-    # Add refresh button
-    if st.button('Refresh Data'):
+        # Get current data
+        df = st.session_state.processor.get_dataframe()
+
+        # Display metrics
+        with col1:
+            st.metric("Total Packets", len(df))
+        with col2:
+            duration = time.time() - st.session_state.start_time
+            st.metric("Capture Duration", f"{duration:.2f}s")
+
+        # Display visualizations
+        create_visualizations(df)
+
+        # Display recent packets
+        st.subheader("Recent Packets")
+        if len(df) > 0:
+            st.dataframe(
+                df.tail(10)[['timestamp', 'source', 'destination', 'protocol', 'size']],
+                use_container_width=True
+            )
+
+        # Add refresh button
+        if st.button('Refresh Data'):
+            st.rerun()
+
+        # Auto refresh
+        time.sleep(2)
         st.rerun()
 
-    # Auto refresh
-    time.sleep(2)
-    st.rerun()
+    elif authentication_status == False:
+        st.error('Username/password is incorrect')
+
+    elif authentication_status == None:
+        st.warning('Please enter your username and password')
 
 if __name__ == "__main__":
     main()
