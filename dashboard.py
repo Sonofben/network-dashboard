@@ -7,6 +7,9 @@ import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
+import os   
+from log_monitor import LogMonitor
+
 
 # Configure logging to capture packet processing events
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message=s)')
@@ -80,6 +83,9 @@ class PacketProcessor:
                     # Keep only the last 10000 packets to prevent memory issues
                     if len(self.packet_data) > 10000:
                         self.packet_data.pop(0)
+                    
+                    # Log the network activity
+                    LogMonitor.log_network_activity(packet_info)
 
         except Exception as e:
             logger.error(f"Error processing packet: {str(e)}")
@@ -93,19 +99,22 @@ class PacketProcessor:
         """
         with self.lock:
             return pd.DataFrame(self.packet_data)
-
     def calculate_bandwidth_mbps(self) -> float:
         """
         Calculate the current bandwidth usage in Mbps.
 
-        Returns:
+          Returns:
             float: Bandwidth usage in Mbps.
         """
         duration = (datetime.now() - self.start_time).total_seconds()
         if duration == 0:
             return 0
         bandwidth_bps = self.total_data_size * 8 / duration  # Convert bytes to bits
-        return bandwidth_bps / 1_000_000  # Convert bits to megabits
+        bandwidth_mbps = bandwidth_bps / 1_000_000  # Convert bits to megabits
+       # Log the bandwidth usage
+        LogMonitor.log_bandwidth_usage(bandwidth_mbps)
+        return bandwidth_mbps
+
 
 def create_visualizations(df: pd.DataFrame):
     """
@@ -126,7 +135,7 @@ def create_visualizations(df: pd.DataFrame):
 
         # Packets per second line chart
         df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df_grouped = df.groupby(df['timestamp'].dt.floor('S')).size()
+        df_grouped = df.groupby(df['timestamp'].dt.floor('s')).size()
         fig_timeline = px.line(
             x=df_grouped.index,
             y=df_grouped.values,
@@ -214,55 +223,93 @@ def main():
     st.set_page_config(page_title="Network Traffic Analysis", layout="wide")
     st.title("Real-time Network Traffic Analysis")
 
-    # Allow users to set alert conditions
-    st.sidebar.header("Alert Settings")
-    packet_threshold = st.sidebar.number_input("Packet Threshold", min_value=0, value=100)
-    alert_protocol = st.sidebar.selectbox("Protocol to Alert", ["TCP", "UDP", "ICMP"])
-    bandwidth_threshold = st.sidebar.number_input("Bandwidth Threshold (Mbps)", min_value=0.0, value=10.0)
+    # Add a sidebar selector for navigation
+    page = st.sidebar.selectbox("Choose Dashboard", ["Network Traffic Analysis", "Log Monitor"])
 
-    # Initialize packet processor in session state
-    if 'processor' not in st.session_state:
-        st.session_state.processor = start_packet_capture()
-        st.session_state.start_time = time.time()
+    if page == "Network Traffic Analysis":
+        # Allow users to set alert conditions
+        st.sidebar.header("Alert Settings")
+        packet_threshold = st.sidebar.number_input("Packet Threshold", min_value=0, value=100)
+        alert_protocol = st.sidebar.selectbox("Protocol to Alert", ["TCP", "UDP", "ICMP"])
+        bandwidth_threshold = st.sidebar.number_input("Bandwidth Threshold (Mbps)", min_value=0.0, value=10.0)
 
-    # Create dashboard layout with three columns
-    col1, col2, col3 = st.columns(3)
+        # Initialize packet processor in session state
+        if 'processor' not in st.session_state:
+            st.session_state.processor = start_packet_capture()
+            st.session_state.start_time = time.time()
 
-    # Get current packet data
-    df = st.session_state.processor.get_dataframe()
+        # Create dashboard layout with three columns
+        col1, col2, col3 = st.columns(3)
 
-    # Display metrics
-    with col1:
-        st.metric("Total Packets", len(df))
-    with col2:
-        duration = time.time() - st.session_state.start_time
-        st.metric("Capture Duration", f"{duration:.2f}s")
-    with col3:
-        bandwidth_mbps = st.session_state.processor.calculate_bandwidth_mbps()
-        st.metric("Bandwidth (Mbps)", f"{bandwidth_mbps:.2f}")
+        # Get current packet data
+        df = st.session_state.processor.get_dataframe()
 
-    # Check and display alerts
-    alerts = check_alert_conditions(df, packet_threshold, alert_protocol, bandwidth_threshold)
-    display_alerts(alerts)
+        # Display metrics
+        with col1:
+            st.metric("Total Packets", len(df))
+        with col2:
+            duration = time.time() - st.session_state.start_time
+            st.metric("Capture Duration", f"{duration:.2f}s")
+        with col3:
+            bandwidth_mbps = st.session_state.processor.calculate_bandwidth_mbps()
+            st.metric("Bandwidth (Mbps)", f"{bandwidth_mbps:.2f}")
 
-    # Display visualizations
-    create_visualizations(df)
+        # Check and display alerts
+        alerts = check_alert_conditions(df, packet_threshold, alert_protocol, bandwidth_threshold)
+        display_alerts(alerts)
 
-    # Display recent packets
-    st.subheader("Recent Packets")
-    if len(df) > 0:
-        st.dataframe(
-            df.tail(10)[['timestamp', 'source', 'destination', 'protocol', 'size']],
-            use_container_width=True
-        )
+        # Display visualizations
+        create_visualizations(df)
 
-    # Add refresh button
-    if st.button('Refresh Data'):
+        # Display recent packets
+        st.subheader("Recent Packets")
+        if len(df) > 0:
+            st.dataframe(
+                df.tail(10)[['timestamp', 'source', 'destination', 'protocol', 'size']],
+                use_container_width=True
+            )
+
+        # Add refresh button
+        if st.button('Refresh Data'):
+            st.rerun()
+
+        # Auto refresh every 2 seconds
+        time.sleep(2)
         st.rerun()
+    
+    elif page == "Log Monitor":
+        st.title("Log Monitor Dashboard")
 
-    # Auto refresh every 2 seconds
-    time.sleep(2)
-    st.rerun()
+        # Display log content
+        st.header("Network Activity Logs")
+        if os.path.exists('network_log.log'):
+            logs = []
+            with open('network_log.log', 'r') as file:
+                lines = file.readlines()
+                for line in lines:
+                    timestamp_str, level, message = line.split(" - ", 2)
+                    timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S,%f')
+                    logs.append({"timestamp": timestamp, "level": level, "message": message.strip()})
+
+            df = pd.DataFrame(logs)
+
+            # Display logs in a table
+            st.subheader("Log Data")
+            st.dataframe(df)
+
+            # Visualize log frequency over time
+            st.subheader("Log Frequency Over Time")
+            fig_timeline = px.line(df, x='timestamp', y=df.index, title='Log Frequency Over Time')
+            st.plotly_chart(fig_timeline, use_container_width=True)
+
+            # Visualize log levels
+            st.subheader("Log Levels")
+            fig_levels = px.pie(df['level'].value_counts().reset_index(), names='index', values='level', title='Log Levels Distribution')
+            st.plotly_chart(fig_levels, use_container_width=True)
+
+        # Refresh button
+        if st.button('Refresh Logs'):
+            st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
