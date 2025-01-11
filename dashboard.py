@@ -8,27 +8,43 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging to capture packet processing events
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message=s)')
 logger = logging.getLogger(__name__)
 
 class PacketProcessor:
-    """Process and analyze network packets"""
+    """Class to process and analyze network packets"""
 
     def __init__(self):
-        self.protocol_map = {1: 'ICMP', 6: 'TCP', 17: 'UDP'}
-        self.packet_data = []
-        self.start_time = datetime.now()
-        self.packet_count = 0
-        self.lock = threading.Lock()
-        self.total_data_size = 0  # To track the total data size
+        """
+        Initialize the PacketProcessor with necessary attributes.
+        """
+        self.protocol_map = {1: 'ICMP', 6: 'TCP', 17: 'UDP'}  # Mapping protocol numbers to names
+        self.packet_data = []  # List to store processed packet data
+        self.start_time = datetime.now()  # Start time to calculate durations
+        self.packet_count = 0  # Counter for packets processed
+        self.lock = threading.Lock()  # Lock for thread-safe operations
+        self.total_data_size = 0  # Total size of data processed in bytes
 
     def get_protocol_name(self, protocol_num: int) -> str:
-        """Convert protocol number to name"""
+        """
+        Convert protocol number to its corresponding name.
+
+        Args:
+            protocol_num (int): The protocol number.
+
+        Returns:
+            str: The protocol name.
+        """
         return self.protocol_map.get(protocol_num, f'OTHER({protocol_num})')
 
     def process_packet(self, packet) -> None:
-        """Process a single packet and extract relevant information"""
+        """
+        Process a single network packet and extract relevant information.
+
+        Args:
+            packet: The network packet to process.
+        """
         try:
             if IP in packet:
                 with self.lock:
@@ -61,7 +77,7 @@ class PacketProcessor:
                     self.packet_count += 1
                     self.total_data_size += packet_size
 
-                    # Keep only last 10000 packets to prevent memory issues
+                    # Keep only the last 10000 packets to prevent memory issues
                     if len(self.packet_data) > 10000:
                         self.packet_data.pop(0)
 
@@ -69,12 +85,22 @@ class PacketProcessor:
             logger.error(f"Error processing packet: {str(e)}")
 
     def get_dataframe(self) -> pd.DataFrame:
-        """Convert packet data to pandas DataFrame"""
+        """
+        Convert packet data to a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: DataFrame containing the packet data.
+        """
         with self.lock:
             return pd.DataFrame(self.packet_data)
 
     def calculate_bandwidth_mbps(self) -> float:
-        """Calculate the current bandwidth usage in Mbps"""
+        """
+        Calculate the current bandwidth usage in Mbps.
+
+        Returns:
+            float: Bandwidth usage in Mbps.
+        """
         duration = (datetime.now() - self.start_time).total_seconds()
         if duration == 0:
             return 0
@@ -82,9 +108,14 @@ class PacketProcessor:
         return bandwidth_bps / 1_000_000  # Convert bits to megabits
 
 def create_visualizations(df: pd.DataFrame):
-    """Create all dashboard visualizations"""
+    """
+    Create and display all dashboard visualizations.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing packet data.
+    """
     if len(df) > 0:
-        # Protocol distribution
+        # Protocol distribution pie chart
         protocol_counts = df['protocol'].value_counts()
         fig_protocol = px.pie(
             values=protocol_counts.values,
@@ -93,7 +124,7 @@ def create_visualizations(df: pd.DataFrame):
         )
         st.plotly_chart(fig_protocol, use_container_width=True)
 
-        # Packets timeline
+        # Packets per second line chart
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df_grouped = df.groupby(df['timestamp'].dt.floor('S')).size()
         fig_timeline = px.line(
@@ -103,7 +134,7 @@ def create_visualizations(df: pd.DataFrame):
         )
         st.plotly_chart(fig_timeline, use_container_width=True)
 
-        # Top source IPs
+        # Top source IP addresses bar chart
         top_sources = df['source'].value_counts().head(10)
         fig_sources = px.bar(
             x=top_sources.index,
@@ -112,8 +143,19 @@ def create_visualizations(df: pd.DataFrame):
         )
         st.plotly_chart(fig_sources, use_container_width=True)
 
-def check_alert_conditions(df: pd.DataFrame, packet_threshold: int, alert_protocol: str, bandwidth_threshold: float):
-    """Check if alert conditions are met"""
+def check_alert_conditions(df: pd.DataFrame, packet_threshold: int, alert_protocol: str, bandwidth_threshold: float) -> List[str]:
+    """
+    Check if alert conditions are met based on packet and bandwidth thresholds.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing packet data.
+        packet_threshold (int): Threshold for total packet count.
+        alert_protocol (str): Protocol to alert on.
+        bandwidth_threshold (float): Bandwidth usage threshold in Mbps.
+
+    Returns:
+        List[str]: List of alerts that were triggered.
+    """
     alerts = []
 
     if 'protocol' not in df.columns:
@@ -136,15 +178,25 @@ def check_alert_conditions(df: pd.DataFrame, packet_threshold: int, alert_protoc
     return alerts
 
 def display_alerts(alerts: List[str]):
-    """Display alerts in the Streamlit app"""
+    """
+    Display alerts in the Streamlit app.
+
+    Args:
+        alerts (List[str]): List of alerts to display.
+    """
     if alerts:
         for alert in alerts:
             st.error(alert)
     else:
         st.success("No alerts")
 
-def start_packet_capture():
-    """Start packet capture in a separate thread"""
+def start_packet_capture() -> PacketProcessor:
+    """
+    Start packet capture in a separate thread.
+
+    Returns:
+        PacketProcessor: The packet processor instance used for capturing packets.
+    """
     processor = PacketProcessor()
 
     def capture_packets():
@@ -156,8 +208,9 @@ def start_packet_capture():
     return processor
 
 def main():
-    """Main function to run the dashboard"""
-
+    """
+    Main function to run the network traffic analysis dashboard.
+    """
     st.set_page_config(page_title="Network Traffic Analysis", layout="wide")
     st.title("Real-time Network Traffic Analysis")
 
@@ -172,10 +225,10 @@ def main():
         st.session_state.processor = start_packet_capture()
         st.session_state.start_time = time.time()
 
-    # Create dashboard layout
-    col1, col2, col3 = st.columns(3)  # Added a third column for bandwidth
+    # Create dashboard layout with three columns
+    col1, col2, col3 = st.columns(3)
 
-    # Get current data
+    # Get current packet data
     df = st.session_state.processor.get_dataframe()
 
     # Display metrics
@@ -207,7 +260,7 @@ def main():
     if st.button('Refresh Data'):
         st.rerun()
 
-    # Auto refresh
+    # Auto refresh every 2 seconds
     time.sleep(2)
     st.rerun()
 
